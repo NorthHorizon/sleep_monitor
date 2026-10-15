@@ -56,15 +56,18 @@ class MonitorPage extends StatelessWidget {
                     ),
                   ],
                 ),
-                const SizedBox(height: 20),
-                Text(
-                  status.isActive
-                      ? formatCountdown(status.remainingSeconds)
-                      : '准备好后开始',
-                  style: theme.textTheme.headlineLarge?.copyWith(
-                    fontWeight: FontWeight.w500,
+                if (status.phase != MonitorPhase.preparing &&
+                    status.phase != MonitorPhase.finalizing) ...[
+                  const SizedBox(height: 20),
+                  Text(
+                    status.isActive
+                        ? formatCountdown(status.remainingSeconds)
+                        : '准备好后开始',
+                    style: theme.textTheme.headlineLarge?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
+                ],
                 const SizedBox(height: 8),
                 Text(status.message ?? '手机独立运行，电脑可以保持关机。'),
                 if (status.startedAt case final DateTime startedAt) ...[
