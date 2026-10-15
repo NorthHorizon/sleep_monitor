@@ -1,17 +1,65 @@
-# sleep_monitor
+# 夜间记录 · Sleep Monitor
 
-test
+用于闲置安卓手机的离线睡眠音视频记录工具。Flutter 提供界面，Kotlin 前台服务负责录制、计时与本地存储。当前基础版本以红米 K30S 至尊纪念版为目标设备。
 
-## Getting Started
+## 当前代码
 
-This project is a starting point for a Flutter application.
+- 监控、片段、设置三个页面；中文深色界面。
+- 设置持久化：模式、单段时长、录完后的等待/冷却时间、最长监控时间、前后摄像头。
+- 定时录制链路：首次立即录像，文件保存完成后等待，再录像；输出带音轨的 MP4。
+- 原生服务状态同步、倒计时、通知栏停止、会话总时长限制。
+- 本地片段索引、调用系统播放器和系统分享导出。
+- 鼾声检测接口和能力开关；**尚未接入模型，鼾声模式不可启动**。
 
-A few resources to get you started if this is your first Flutter project:
+这是基础实现，安卓编译、真机录制和整晚熄屏稳定性需要在有工具链的机器上验证。不会在其他平台生成模拟录像或虚假的鼾声事件。
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 开发环境
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- Flutter 3.38.5 / Dart 3.10.4 或更新的兼容稳定版。
+- 安卓最低 API 26（Android 8.0）。实际 K30S Android 版本待确认。
+- 工作电脑安装 Flutter 所需 Android SDK，以及兼容当前 Gradle / AGP 的 JDK 17 或更新支持版本。先用 `flutter doctor -v` 检查。
+
+```powershell
+flutter pub get
+flutter analyze
+flutter test
+
+# 工作电脑：先构建 APK（Flutter 会准备 Gradle wrapper），再运行原生测试
+flutter build apk --debug
+cd android
+.\gradlew.bat :app:testDebugUnitTest
+cd ..
+flutter run
+```
+
+监控需要相机和麦克风权限。Android 13+ 会请求通知权限，通知栏提供停止入口。网络与电脑都不是录制前提。MIUI 下需检查该应用的后台电量管理，并用短参数验证熄屏行为。
+
+## 先在真机验证
+
+将录制设为 15 秒、等待设为 10 秒、最长监控设为 1 分钟：开始后应立即录第一段，录完且保存后等待 10 秒，再录下一段，1 分钟到期后结束当前片段。检查每段音画、播放、系统分享以及等待期间手动停止。之后再进行熄屏与整晚验证。
+
+默认是每段 5 分钟、录完等 15 分钟、最长 8 小时。这一“定时模式从录完开始计间隔”的定义是当前假设，可再调整；鼾声模式的冷却也从录完开始计时。
+
+视频保存在应用专属目录，卸载应用会一并删除。需保留的片段请先使用“导出 / 分享”。当前不自动删除旧文件，不自动恢复进程被杀时的半成品视频。
+
+## 目录
+
+```text
+lib/src/
+  domain/          配置、能力、服务快照、片段模型
+  application/     控制器与操作状态
+  platform/        安卓通道和非安卓回退
+  ui/              监控、片段、设置页面
+android/app/src/main/kotlin/com/nightowl/sleep_monitor/monitor/
+  MonitorBridge.kt       Flutter 通道、权限、播放/分享
+  MonitorService.kt      会话状态机与前台服务
+  SessionSchedule.kt     单调时钟截止时间
+  CameraXClipRecorder.kt  音视频录制适配器
+  MonitorRepository.kt   配置与片段持久化
+  SnoreDetector.kt       本地鼾声检测扩展点
+test/                    Flutter 控制器与界面测试
+android/app/src/test/    原生计时边界测试
+docs/architecture.md    触发约定、平台协议、存储、实现边界
+```
+
+技术方案和后续扩展详见 [架构说明](docs/architecture.md)。

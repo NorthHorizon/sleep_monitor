@@ -24,7 +24,7 @@ android {
         applicationId = "com.nightowl.sleep_monitor"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 26
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
@@ -41,4 +41,14 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    val cameraVersion = "1.5.3"
+    implementation("androidx.camera:camera-camera2:$cameraVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraVersion")
+    implementation("androidx.camera:camera-video:$cameraVersion")
+    implementation("androidx.lifecycle:lifecycle-service:2.9.4")
+    implementation("androidx.core:core-ktx:1.16.0")
+    testImplementation("junit:junit:4.13.2")
 }
