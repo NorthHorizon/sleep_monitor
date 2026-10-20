@@ -8,10 +8,12 @@ class MonitorPage extends StatelessWidget {
   const MonitorPage({
     super.key,
     required this.controller,
+    required this.now,
     required this.onSettings,
   });
 
   final MonitorController controller;
+  final DateTime now;
   final VoidCallback onSettings;
 
   @override
@@ -19,6 +21,7 @@ class MonitorPage extends StatelessWidget {
     final theme = Theme.of(context);
     final status = controller.snapshot;
     final settings = controller.settings;
+    final end = status.isActive ? status.endsAt : settings.nextEndAt(now);
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
@@ -70,6 +73,23 @@ class MonitorPage extends StatelessWidget {
                 ],
                 const SizedBox(height: 8),
                 Text(status.message ?? '手机独立运行，电脑可以保持关机。'),
+                if (end != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    status.isActive
+                        ? '本次监控将于${formatEndTime(end, now)}自动结束'
+                        : '现在开始，将于${formatEndTime(end, now)}自动结束',
+                    key: const Key('monitor-end-time'),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.primary,
+                    ),
+                  ),
+                  if (!status.isActive)
+                    Text(
+                      '预计监控 ${formatPlannedDuration(now, end)}',
+                      style: theme.textTheme.bodySmall,
+                    ),
+                ],
                 if (status.startedAt case final DateTime startedAt) ...[
                   const SizedBox(height: 12),
                   Text(
@@ -127,9 +147,7 @@ class MonitorPage extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.videocam_outlined),
                 title: Text(settings.camera.label),
-                subtitle: Text(
-                  '最长监控 ${formatDuration(settings.sessionSeconds)} · 带声音的视频',
-                ),
+                subtitle: const Text('带声音的视频 · 到点停止并保存当前片段'),
               ),
             ],
           ),

@@ -23,3 +23,25 @@ String formatDateTime(DateTime value) {
   String two(int number) => number.toString().padLeft(2, '0');
   return '${date.month}月${date.day}日 ${two(date.hour)}:${two(date.minute)}';
 }
+
+String formatTimeOfDay(int hour, int minute) =>
+    '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+
+String formatEndTime(DateTime end, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final tomorrow = DateTime(now.year, now.month, now.day + 1);
+  final date = DateTime(end.year, end.month, end.day);
+  final label = date == today
+      ? '今天'
+      : date == tomorrow
+      ? '明天'
+      : '${end.month}月${end.day}日';
+  return '$label ${formatTimeOfDay(end.hour, end.minute)}';
+}
+
+String formatPlannedDuration(DateTime now, DateTime end) {
+  final remaining = end.difference(now).inMilliseconds;
+  if (remaining <= 0) return '即将结束';
+  if (remaining < 60000) return '不到 1 分钟';
+  return formatDuration(((remaining + 59999) ~/ 60000) * 60);
+}

@@ -8,11 +8,15 @@ class SettingsPage extends StatefulWidget {
   const SettingsPage({
     super.key,
     required this.settings,
+    required this.now,
+    this.sessionEndsAt,
     required this.enabled,
     required this.onSave,
   });
 
   final MonitorSettings settings;
+  final DateTime now;
+  final DateTime? sessionEndsAt;
   final bool enabled;
   final Future<bool> Function(MonitorSettings) onSave;
 
@@ -24,7 +28,7 @@ class _SettingsPageState extends State<SettingsPage> {
   final _form = GlobalKey<FormState>();
   late final TextEditingController _recording;
   late final TextEditingController _interval;
-  late final TextEditingController _session;
+  late TimeOfDay _endTime;
   late TriggerMode _mode;
   late CameraFacing _camera;
 
@@ -33,14 +37,16 @@ class _SettingsPageState extends State<SettingsPage> {
     super.initState();
     _recording = TextEditingController();
     _interval = TextEditingController();
-    _session = TextEditingController();
     _loadSettings();
   }
 
   void _loadSettings() {
     _recording.text = '${widget.settings.recordingSeconds}';
     _interval.text = '${widget.settings.intervalSeconds}';
-    _session.text = '${widget.settings.sessionSeconds ~/ 60}';
+    _endTime = TimeOfDay(
+      hour: widget.settings.endHour,
+      minute: widget.settings.endMinute,
+    );
     _mode = widget.settings.mode;
     _camera = widget.settings.camera;
   }
@@ -55,7 +61,6 @@ class _SettingsPageState extends State<SettingsPage> {
   void dispose() {
     _recording.dispose();
     _interval.dispose();
-    _session.dispose();
     super.dispose();
   }
 
@@ -66,7 +71,8 @@ class _SettingsPageState extends State<SettingsPage> {
         mode: _mode,
         recordingSeconds: int.parse(_recording.text),
         intervalSeconds: int.parse(_interval.text),
-        sessionSeconds: int.parse(_session.text) * 60,
+        endHour: _endTime.hour,
+        endMinute: _endTime.minute,
         camera: _camera,
       ),
     );
@@ -77,11 +83,31 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _pickEndTime() async {
+    final selected = await showTimePicker(
+      context: context,
+      initialTime: _endTime,
+      helpText: '选择自动结束时间',
+      cancelText: '取消',
+      confirmText: '确定',
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+        child: child!,
+      ),
+    );
+    if (selected != null && mounted) setState(() => _endTime = selected);
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final interval = int.tryParse(_interval.text) ?? 0;
     final recording = int.tryParse(_recording.text) ?? 0;
+    final end =
+        widget.sessionEndsAt ??
+        widget.settings
+            .copyWith(endHour: _endTime.hour, endMinute: _endTime.minute)
+            .nextEndAt(widget.now);
     return Form(
       key: _form,
       child: ListView(
@@ -127,7 +153,33 @@ class _SettingsPageState extends State<SettingsPage> {
             style: theme.textTheme.bodySmall,
           ),
           const SizedBox(height: 20),
-          _numberField(_session, '最长监控时间（分钟）', 1, 1440),
+          OutlinedButton.icon(
+            key: const Key('pick-end-time'),
+            onPressed: widget.enabled ? _pickEndTime : null,
+            icon: const Icon(Icons.access_time),
+            label: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              child: Text(
+                '自动结束时间  ${formatTimeOfDay(_endTime.hour, _endTime.minute)}',
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            widget.sessionEndsAt != null
+                ? '本次监控将于${formatEndTime(end, widget.now)}自动结束。'
+                : '现在开始，将于${formatEndTime(end, widget.now)}结束，'
+                      '预计监控 ${formatPlannedDuration(widget.now, end)}。',
+            key: const Key('end-time-preview'),
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            widget.sessionEndsAt != null
+                ? '到点结束当前录像并保存片段。'
+                : '已过的时刻按明天计算。到点结束当前录像并保存片段。',
+            style: theme.textTheme.bodySmall,
+          ),
           const SizedBox(height: 20),
           DropdownButtonFormField<CameraFacing>(
             key: ValueKey('camera-$_camera'),

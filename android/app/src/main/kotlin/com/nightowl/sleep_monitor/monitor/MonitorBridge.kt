@@ -20,7 +20,12 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
     private val commands = MethodChannel(messenger, "com.nightowl.sleep_monitor/commands")
     private val events = EventChannel(messenger, "com.nightowl.sleep_monitor/events")
     private var listener: ((MonitorStatus) -> Unit)? = null
-    private var pendingStart: MethodChannel.Result? = null
+    private data class PendingStart(
+        val result: MethodChannel.Result,
+        val config: MonitorConfig,
+        val endsAt: Long,
+    )
+    private var pendingStart: PendingStart? = null
 
     init {
         commands.setMethodCallHandler(this)
@@ -100,7 +105,9 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
         val missing = required.filter {
             ContextCompat.checkSelfPermission(activity, it) != PackageManager.PERMISSION_GRANTED
         }
-        pendingStart = result
+        pendingStart = PendingStart(result, config, EndTimeResolver.nextOccurrence(
+            System.currentTimeMillis(), config.endHour, config.endMinute,
+        ))
         if (missing.isEmpty()) {
             completeStart()
         } else {
@@ -118,24 +125,30 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
     }
 
     private fun completeStart() {
-        val result = pendingStart ?: return
+        val pending = pendingStart ?: return
+        val result = pending.result
         pendingStart = null
         try {
             val granted = listOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO).all {
                 ContextCompat.checkSelfPermission(activity, it) == PackageManager.PERMISSION_GRANTED
             }
             check(granted) { "需要相机和麦克风权限才能录制，请在系统设置中授权后重试" }
-            val config = repository.settings()
+            val config = pending.config
+            check(pending.endsAt > System.currentTimeMillis()) {
+                "设置的结束时间已过，请重新选择时间或重新开始监控"
+            }
             val sessionId = UUID.randomUUID().toString()
             // Reserve the session before the service callback to reject duplicate starts.
             MonitorRuntime.publish(MonitorStatus(
                 phase = "preparing", sessionId = sessionId,
-                startedAt = System.currentTimeMillis(), message = "正在启动监控服务",
+                startedAt = System.currentTimeMillis(), endsAt = pending.endsAt,
+                message = "正在启动监控服务",
             ))
             ContextCompat.startForegroundService(activity,
                 Intent(activity, MonitorService::class.java)
                     .setAction(MonitorService.ACTION_START)
                     .putExtra("config", config.toJson())
+                    .putExtra("endsAt", pending.endsAt)
                     .putExtra("sessionId", sessionId))
             result.success(null)
         } catch (error: Exception) {
@@ -159,7 +172,7 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
         onCancel(null)
         commands.setMethodCallHandler(null)
         events.setStreamHandler(null)
-        pendingStart?.error("ACTIVITY_CLOSED", "页面已关闭，请重新开始监控", null)
+        pendingStart?.result?.error("ACTIVITY_CLOSED", "页面已关闭，请重新开始监控", null)
         pendingStart = null
     }
 

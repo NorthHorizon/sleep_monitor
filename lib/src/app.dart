@@ -9,8 +9,9 @@ import 'ui/recordings_page.dart';
 import 'ui/settings_page.dart';
 
 class SleepMonitorApp extends StatefulWidget {
-  const SleepMonitorApp({super.key, required this.gateway});
+  const SleepMonitorApp({super.key, required this.gateway, this.now});
   final MonitorGateway gateway;
+  final DateTime Function()? now;
 
   @override
   State<SleepMonitorApp> createState() => _SleepMonitorAppState();
@@ -20,25 +21,53 @@ class _SleepMonitorAppState extends State<SleepMonitorApp>
     with WidgetsBindingObserver {
   late final MonitorController _controller;
   int _selectedPage = 0;
+  Timer? _clockTimer;
+  late DateTime _now;
+
+  DateTime _readNow() => widget.now?.call() ?? DateTime.now();
+
+  void _scheduleClockRefresh() {
+    _clockTimer?.cancel();
+    final current = _readNow();
+    _clockTimer = Timer(
+      Duration(
+        milliseconds: 60000 - current.second * 1000 - current.millisecond,
+      ),
+      () {
+        if (!mounted) return;
+        setState(() => _now = _readNow());
+        _scheduleClockRefresh();
+      },
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _controller = MonitorController(widget.gateway);
+    _now = _readNow();
+    _scheduleClockRefresh();
     unawaited(_controller.initialize());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_controller.initializing) {
-      unawaited(_controller.refreshRecordings());
+    if (state == AppLifecycleState.resumed) {
+      setState(() => _now = _readNow());
+      _scheduleClockRefresh();
+      if (!_controller.initializing) {
+        unawaited(_controller.refreshRecordings());
+      }
+    } else {
+      _clockTimer?.cancel();
     }
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _clockTimer?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -115,12 +144,17 @@ class _SleepMonitorAppState extends State<SleepMonitorApp>
                             children: [
                               MonitorPage(
                                 controller: _controller,
+                                now: _now,
                                 onSettings: () =>
                                     setState(() => _selectedPage = 2),
                               ),
                               RecordingsPage(controller: _controller),
                               SettingsPage(
                                 settings: _controller.settings,
+                                now: _now,
+                                sessionEndsAt: _controller.snapshot.isActive
+                                    ? _controller.snapshot.endsAt
+                                    : null,
                                 enabled:
                                     _controller.canEdit &&
                                     _controller.capabilities.timedRecording,

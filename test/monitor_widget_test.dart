@@ -7,6 +7,65 @@ import 'package:sleep_monitor/src/platform/monitor_gateway.dart';
 import 'support/fake_monitor_gateway.dart';
 
 void main() {
+  testWidgets('the plan shows tomorrow morning instead of duration input', (
+    tester,
+  ) async {
+    final gateway = FakeMonitorGateway();
+    await tester.pumpWidget(
+      SleepMonitorApp(gateway: gateway, now: () => DateTime(2026, 10, 15, 23)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('现在开始，将于明天 07:00自动结束'), findsOneWidget);
+    expect(find.text('预计监控 8 小时'), findsOneWidget);
+    await tester.tap(find.text('设置'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('pick-end-time')), findsOneWidget);
+    expect(find.textContaining('最长监控时间'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    await gateway.events.close();
+  });
+
+  testWidgets(
+    'an active session displays the native end time, not a new plan',
+    (tester) async {
+      final gateway = FakeMonitorGateway()
+        ..snapshot = MonitorSnapshot(
+          phase: MonitorPhase.finalizing,
+          endsAt: DateTime(2026, 10, 16, 7),
+        );
+      await tester.pumpWidget(
+        SleepMonitorApp(
+          gateway: gateway,
+          now: () => DateTime(2026, 10, 16, 7, 1),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('本次监控将于今天 07:00自动结束'), findsOneWidget);
+      expect(find.textContaining('明天 07:00'), findsNothing);
+      await tester.tap(find.text('设置'));
+      await tester.pumpAndSettle();
+      expect(find.text('本次监控将于今天 07:00自动结束。'), findsOneWidget);
+      expect(find.textContaining('明天 07:00'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+      await gateway.events.close();
+    },
+  );
+
+  testWidgets('the idle preview updates when the chosen time passes', (
+    tester,
+  ) async {
+    final gateway = FakeMonitorGateway();
+    var now = DateTime(2026, 10, 15, 6, 59);
+    await tester.pumpWidget(SleepMonitorApp(gateway: gateway, now: () => now));
+    await tester.pumpAndSettle();
+    expect(find.text('现在开始，将于今天 07:00自动结束'), findsOneWidget);
+    now = DateTime(2026, 10, 15, 7);
+    await tester.pump(const Duration(minutes: 1));
+    expect(find.text('现在开始，将于明天 07:00自动结束'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await gateway.events.close();
+  });
+
   testWidgets(
     'start and stop follow native events and recording list is empty',
     (tester) async {
@@ -14,10 +73,12 @@ void main() {
       await tester.pumpWidget(SleepMonitorApp(gateway: gateway));
       await tester.pumpAndSettle();
       expect(find.text('准备好后开始'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('monitor-toggle')));
       await tester.tap(find.byKey(const Key('monitor-toggle')));
       await tester.pumpAndSettle();
       expect(gateway.starts, 1);
       expect(find.text('正在准备录制'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('monitor-toggle')));
       await tester.tap(find.byKey(const Key('monitor-toggle')));
       await tester.pumpAndSettle();
       expect(gateway.stops, 1);
@@ -49,7 +110,8 @@ void main() {
   testWidgets('settings validate input and persist through the gateway', (
     tester,
   ) async {
-    final gateway = FakeMonitorGateway();
+    final gateway = FakeMonitorGateway()
+      ..settings = const MonitorSettings(endHour: 6, endMinute: 45);
     await tester.pumpWidget(SleepMonitorApp(gateway: gateway));
     await tester.pumpAndSettle();
     await tester.tap(find.text('设置'));
@@ -66,6 +128,8 @@ void main() {
     await tester.tap(find.byKey(const Key('save-settings')));
     await tester.pumpAndSettle();
     expect(gateway.settings.recordingSeconds, 15);
+    expect(gateway.settings.endHour, 6);
+    expect(gateway.settings.endMinute, 45);
     expect(gateway.saves, 1);
     await tester.pumpWidget(const SizedBox());
     await gateway.events.close();
@@ -83,6 +147,7 @@ void main() {
         find.byKey(const Key('monitor-toggle')),
       );
       expect(button.onPressed, isNull);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 }

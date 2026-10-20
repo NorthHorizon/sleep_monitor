@@ -33,7 +33,19 @@ class MonitorService : LifecycleService() {
     private var clipStartedAt: Long? = null
     private var sessionStartedAt = 0L
     private var completedClips = 0
+    private var autoEnded = false
     private var phase = "idle"
+
+    private val automaticStop = Runnable {
+        if (running && !stopping) {
+            if (schedule.sessionExpired(System.currentTimeMillis())) {
+                requestStop()
+            } else {
+                // A manual clock correction may move the fixed end instant further away.
+                armAutomaticStop()
+            }
+        }
+    }
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -70,11 +82,14 @@ class MonitorService : LifecycleService() {
                     check(config.mode == "timed") { "鼾声检测尚未启用，请先使用定时录制" }
                     sessionId = intent.getStringExtra("sessionId") ?: error("缺少监控会话")
                     sessionStartedAt = System.currentTimeMillis()
-                    schedule = SessionSchedule(SystemClock.elapsedRealtime(), config.sessionSeconds)
+                    val endsAt = intent.getLongExtra("endsAt", 0L)
+                    check(endsAt > sessionStartedAt) { "设置的结束时间已过，请重新开始监控" }
+                    schedule = SessionSchedule(endsAt)
                     running = true
                     stopping = false
                     stopError = null
                     completedClips = 0
+                    autoEnded = false
                     repository.markSessionActive(true)
                     var types = 0
                     if (Build.VERSION.SDK_INT >= 29) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
@@ -82,7 +97,8 @@ class MonitorService : LifecycleService() {
                     ServiceCompat.startForeground(this, NOTIFICATION_ID, notification("正在准备录制"), types)
                     wakeLock = requireNotNull(getSystemService(PowerManager::class.java))
                         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SleepMonitor:Session")
-                        .apply { acquire(config.sessionSeconds * 1000L + 60_000L) }
+                        .apply { acquire((endsAt - sessionStartedAt) + 60_000L) }
+                    armAutomaticStop()
                     beginRecording()
                     if (running) handler.post(ticker)
                 } catch (error: Exception) {
@@ -97,7 +113,7 @@ class MonitorService : LifecycleService() {
 
     private fun beginRecording() {
         if (!running || stopping) return
-        if (schedule.sessionExpired(SystemClock.elapsedRealtime())) {
+        if (schedule.sessionExpired(System.currentTimeMillis())) {
             requestStop()
             return
         }
@@ -131,10 +147,11 @@ class MonitorService : LifecycleService() {
                                     startedAt = clipStartedAt ?: (System.currentTimeMillis() - recorded.durationMilliseconds),
                                     durationMilliseconds = recorded.durationMilliseconds,
                                     sizeBytes = recorded.file.length(), path = recorded.file.absolutePath,
-                                    config = config,
+                                    settingsSnapshot = config.toMap() + mapOf("endsAt" to schedule.endsAtEpochMs),
                                 ))
                                 completedClips++
-                                if (stopping || schedule.sessionExpired(SystemClock.elapsedRealtime())) {
+                                if (stopping || schedule.sessionExpired(System.currentTimeMillis())) {
+                                    if (!stopping) autoEnded = true
                                     finishSession(stopError)
                                 } else {
                                     // Only a finalized, successfully indexed clip starts the interval.
@@ -155,7 +172,7 @@ class MonitorService : LifecycleService() {
 
     private fun tick() {
         val now = SystemClock.elapsedRealtime()
-        if (!stopping && schedule.sessionExpired(now)) {
+        if (!stopping && schedule.sessionExpired(System.currentTimeMillis())) {
             requestStop()
             return
         }
@@ -179,14 +196,22 @@ class MonitorService : LifecycleService() {
         if (!running || stopping) return
         stopping = true
         stopError = error
+        if (error == null && schedule.sessionExpired(System.currentTimeMillis())) autoEnded = true
+        handler.removeCallbacks(automaticStop)
         if (recorder.isRecording) {
             phase = "stopping"
             schedule.beginPhase(SystemClock.elapsedRealtime(), 20)
-            publish(error ?: "正在保存最后一个片段")
+            publish(error ?: if (autoEnded) "已到结束时间，正在保存最后一个片段" else "正在保存最后一个片段")
             stopRecorder()
         } else {
             finishSession(error)
         }
+    }
+
+    private fun armAutomaticStop() {
+        handler.removeCallbacks(automaticStop)
+        val delay = (schedule.endsAtEpochMs - System.currentTimeMillis()).coerceAtLeast(0)
+        handler.postDelayed(automaticStop, delay)
     }
 
     private fun stopRecorder() {
@@ -198,7 +223,8 @@ class MonitorService : LifecycleService() {
     private fun publish(message: String?) {
         val next = MonitorStatus(
             phase = phase, sessionId = sessionId, startedAt = sessionStartedAt,
-            remainingSeconds = schedule.remainingSeconds(SystemClock.elapsedRealtime()),
+            endsAt = schedule.endsAtEpochMs,
+            remainingSeconds = schedule.remainingSeconds(SystemClock.elapsedRealtime(), System.currentTimeMillis()),
             completedClips = completedClips, message = message,
         )
         val previous = MonitorRuntime.status
@@ -220,8 +246,10 @@ class MonitorService : LifecycleService() {
             phase = if (finalError == null) "idle" else "error",
             sessionId = sessionId.ifEmpty { null },
             startedAt = sessionStartedAt.takeIf { it > 0 },
+            endsAt = if (::schedule.isInitialized) schedule.endsAtEpochMs else null,
             completedClips = completedClips,
-            message = finalError ?: "本次监控已结束，已保存 $completedClips 段",
+            message = finalError ?: if (autoEnded) "已到自动结束时间，已保存 $completedClips 段"
+                else "本次监控已结束，已保存 $completedClips 段",
         ))
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

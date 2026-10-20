@@ -69,7 +69,8 @@ void main() {
       const MonitorSettings(recordingSeconds: 0),
       const MonitorSettings(recordingSeconds: 301),
       const MonitorSettings(intervalSeconds: 0),
-      const MonitorSettings(sessionSeconds: 86401),
+      const MonitorSettings(endHour: 24),
+      const MonitorSettings(endMinute: 60),
     ]) {
       expect(await controller.saveSettings(settings), isFalse);
     }

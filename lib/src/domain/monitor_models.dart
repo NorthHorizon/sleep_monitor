@@ -35,7 +35,8 @@ class MonitorSettings {
     this.mode = TriggerMode.timed,
     this.recordingSeconds = 300,
     this.intervalSeconds = 900,
-    this.sessionSeconds = 28800,
+    this.endHour = 7,
+    this.endMinute = 0,
     this.camera = CameraFacing.back,
   });
 
@@ -43,7 +44,8 @@ class MonitorSettings {
   final int recordingSeconds;
   // The interval begins after the previous recording has been finalized.
   final int intervalSeconds;
-  final int sessionSeconds;
+  final int endHour;
+  final int endMinute;
   final CameraFacing camera;
 
   String? get validationError {
@@ -53,8 +55,8 @@ class MonitorSettings {
     if (intervalSeconds < 1 || intervalSeconds > 86400) {
       return '录制间隔须为 1 秒至 24 小时';
     }
-    if (sessionSeconds < 60 || sessionSeconds > 86400) {
-      return '监控总时长须为 1 分钟至 24 小时';
+    if (endHour < 0 || endHour > 23 || endMinute < 0 || endMinute > 59) {
+      return '请选择有效的自动结束时间';
     }
     return null;
   }
@@ -63,13 +65,15 @@ class MonitorSettings {
     TriggerMode? mode,
     int? recordingSeconds,
     int? intervalSeconds,
-    int? sessionSeconds,
+    int? endHour,
+    int? endMinute,
     CameraFacing? camera,
   }) => MonitorSettings(
     mode: mode ?? this.mode,
     recordingSeconds: recordingSeconds ?? this.recordingSeconds,
     intervalSeconds: intervalSeconds ?? this.intervalSeconds,
-    sessionSeconds: sessionSeconds ?? this.sessionSeconds,
+    endHour: endHour ?? this.endHour,
+    endMinute: endMinute ?? this.endMinute,
     camera: camera ?? this.camera,
   );
 
@@ -77,7 +81,8 @@ class MonitorSettings {
     'mode': mode.name,
     'recordingSeconds': recordingSeconds,
     'intervalSeconds': intervalSeconds,
-    'sessionSeconds': sessionSeconds,
+    'endHour': endHour,
+    'endMinute': endMinute,
     'camera': camera.name,
   };
 
@@ -85,9 +90,20 @@ class MonitorSettings {
     mode: TriggerMode.values.byName(map['mode'] as String),
     recordingSeconds: (map['recordingSeconds'] as num).toInt(),
     intervalSeconds: (map['intervalSeconds'] as num).toInt(),
-    sessionSeconds: (map['sessionSeconds'] as num).toInt(),
+    // Settings from the duration-based version adopt the new 07:00 default.
+    endHour: (map['endHour'] as num?)?.toInt() ?? 7,
+    endMinute: (map['endMinute'] as num?)?.toInt() ?? 0,
     camera: CameraFacing.values.byName(map['camera'] as String),
   );
+
+  /// Preview only. Android resolves and freezes the actual deadline on start.
+  DateTime nextEndAt(DateTime now) {
+    DateTime onDay(int day) => now.isUtc
+        ? DateTime.utc(now.year, now.month, day, endHour, endMinute)
+        : DateTime(now.year, now.month, day, endHour, endMinute);
+    final today = onDay(now.day);
+    return today.isAfter(now) ? today : onDay(now.day + 1);
+  }
 }
 
 class MonitorSnapshot {
@@ -95,6 +111,7 @@ class MonitorSnapshot {
     this.phase = MonitorPhase.idle,
     this.sessionId,
     this.startedAt,
+    this.endsAt,
     this.remainingSeconds = 0,
     this.completedClips = 0,
     this.message,
@@ -103,6 +120,7 @@ class MonitorSnapshot {
   final MonitorPhase phase;
   final String? sessionId;
   final DateTime? startedAt;
+  final DateTime? endsAt;
   final int remainingSeconds;
   final int completedClips;
   final String? message;
@@ -116,6 +134,9 @@ class MonitorSnapshot {
         : DateTime.fromMillisecondsSinceEpoch(
             (map['startedAt'] as num).toInt(),
           ),
+    endsAt: map['endsAt'] == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch((map['endsAt'] as num).toInt()),
     remainingSeconds: (map['remainingSeconds'] as num?)?.toInt() ?? 0,
     completedClips: (map['completedClips'] as num?)?.toInt() ?? 0,
     message: map['message'] as String?,

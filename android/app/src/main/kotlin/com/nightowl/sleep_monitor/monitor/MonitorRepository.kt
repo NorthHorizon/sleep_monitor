@@ -15,12 +15,12 @@ data class SavedClip(
     val durationMilliseconds: Long,
     val sizeBytes: Long,
     val path: String,
-    val config: MonitorConfig,
+    val settingsSnapshot: Map<String, Any>,
 ) {
     fun toMap(): Map<String, Any> = mapOf(
         "id" to id, "sessionId" to sessionId, "mode" to mode,
         "startedAt" to startedAt, "durationMilliseconds" to durationMilliseconds,
-        "sizeBytes" to sizeBytes, "path" to path, "settings" to config.toMap(),
+        "sizeBytes" to sizeBytes, "path" to path, "settings" to settingsSnapshot,
     )
 
     companion object {
@@ -28,7 +28,9 @@ data class SavedClip(
             value.getString("id"), value.getString("sessionId"),
             value.getString("mode"), value.getLong("startedAt"),
             value.getLong("durationMilliseconds"), value.getLong("sizeBytes"),
-            value.getString("path"), MonitorConfig.fromJson(value.getJSONObject("settings").toString()),
+            value.getString("path"), value.getJSONObject("settings").let { settings ->
+                settings.keys().asSequence().associateWith { settings.get(it) }
+            },
         )
     }
 }
