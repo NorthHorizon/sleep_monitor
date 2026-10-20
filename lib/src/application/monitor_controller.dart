@@ -91,6 +91,10 @@ class MonitorController extends ChangeNotifier {
       _perform(() => _gateway.openRecording(id));
   Future<bool> shareRecording(String id) =>
       _perform(() => _gateway.shareRecording(id));
+  Future<bool> shareDiagnostics() async {
+    if (!canEdit || !capabilities.timedRecording) return false;
+    return _perform(_gateway.shareDiagnostics);
+  }
 
   void dismissError() {
     error = null;

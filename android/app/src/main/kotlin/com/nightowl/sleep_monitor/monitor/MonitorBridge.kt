@@ -16,6 +16,7 @@ import java.util.UUID
 class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) :
     MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
     private val repository = MonitorRepository(activity.applicationContext)
+    private val diagnostics = SessionDiagnostics(activity.applicationContext)
     private val detector: SnoreDetector = UnavailableSnoreDetector()
     private val commands = MethodChannel(messenger, "com.nightowl.sleep_monitor/commands")
     private val events = EventChannel(messenger, "com.nightowl.sleep_monitor/events")
@@ -38,6 +39,9 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
                 "bootstrap" -> {
                     if (repository.sessionWasActive() && !MonitorRuntime.status.isActive) {
                         repository.markSessionActive(false)
+                        diagnostics.record("previous_session_interrupted", details = mapOf(
+                            "message" to "重开应用时发现上次会话未正常结束；此时间是发现时间，非中断时间",
+                        ), includeDeviceState = true)
                         MonitorRuntime.publish(MonitorStatus(
                             phase = "error", message = "上次监控意外中断，请检查已有片段后重新开始",
                         ))
@@ -69,6 +73,19 @@ class MonitorBridge(private val activity: Activity, messenger: BinaryMessenger) 
                     result.success(null)
                 }
                 "listRecordings" -> result.success(repository.listClips().map { it.toMap() })
+                "shareDiagnostics" -> {
+                    check(!MonitorRuntime.status.isActive && pendingStart == null) { "请先结束监控，再导出日志" }
+                    val file = diagnostics.export()
+                    val uri = FileProvider.getUriForFile(
+                        activity, "${activity.packageName}.recordings", file,
+                    )
+                    val intent = Intent(Intent.ACTION_SEND).setType("application/zip")
+                        .putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        .apply { clipData = android.content.ClipData.newRawUri("运行日志", uri) }
+                    activity.startActivity(Intent.createChooser(intent, "导出运行日志"))
+                    result.success(null)
+                }
                 "openRecording", "shareRecording" -> {
                     val id = call.argument<String>("id") ?: error("缺少片段 ID")
                     val file = repository.clipFile(id)

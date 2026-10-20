@@ -22,6 +22,7 @@ class MonitorService : LifecycleService() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var repository: MonitorRepository
     private lateinit var recorder: ClipRecorder
+    private lateinit var diagnostics: SessionDiagnostics
     private lateinit var config: MonitorConfig
     private lateinit var schedule: SessionSchedule
     private var wakeLock: PowerManager.WakeLock? = null
@@ -35,6 +36,10 @@ class MonitorService : LifecycleService() {
     private var completedClips = 0
     private var autoEnded = false
     private var phase = "idle"
+    private var clipPrepareElapsedMs = 0L
+    private var clipFinalizeElapsedMs: Long? = null
+    private var lastHeartbeatElapsedMs = 0L
+    private var lastTickElapsedMs = 0L
 
     private val automaticStop = Runnable {
         if (running && !stopping) {
@@ -53,6 +58,7 @@ class MonitorService : LifecycleService() {
             try {
                 tick()
             } catch (error: Exception) {
+                logEvent("session_exception", mapOf("error" to error.stackTraceToString().take(4000)))
                 requestStop(error.message ?: "监控运行失败")
             }
             if (running) handler.postDelayed(this, 1000)
@@ -63,6 +69,7 @@ class MonitorService : LifecycleService() {
         super.onCreate()
         repository = MonitorRepository(applicationContext)
         recorder = CameraXClipRecorder(this, this)
+        diagnostics = SessionDiagnostics(this)
         val channel = NotificationChannel(CHANNEL, "夜间监控", NotificationManager.IMPORTANCE_LOW)
         channel.setSound(null, null)
         channel.enableVibration(false)
@@ -90,6 +97,10 @@ class MonitorService : LifecycleService() {
                     stopError = null
                     completedClips = 0
                     autoEnded = false
+                    clipId = ""
+                    phase = "preparing"
+                    lastHeartbeatElapsedMs = SystemClock.elapsedRealtime()
+                    lastTickElapsedMs = lastHeartbeatElapsedMs
                     repository.markSessionActive(true)
                     var types = 0
                     if (Build.VERSION.SDK_INT >= 29) types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
@@ -98,10 +109,15 @@ class MonitorService : LifecycleService() {
                     wakeLock = requireNotNull(getSystemService(PowerManager::class.java))
                         .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "SleepMonitor:Session")
                         .apply { acquire((endsAt - sessionStartedAt) + 60_000L) }
+                    logEvent("session_start", mapOf(
+                        "settings" to config.toMap(), "endsAt" to endsAt,
+                        "environment" to diagnostics.environment(),
+                    ), includeDeviceState = true)
                     armAutomaticStop()
                     beginRecording()
                     if (running) handler.post(ticker)
                 } catch (error: Exception) {
+                    logEvent("session_exception", mapOf("error" to error.stackTraceToString().take(4000)))
                     finishSession(error.message ?: "无法启动监控")
                 }
             }
@@ -119,20 +135,30 @@ class MonitorService : LifecycleService() {
         }
         clipId = UUID.randomUUID().toString()
         clipStartedAt = null
+        clipPrepareElapsedMs = SystemClock.elapsedRealtime()
+        clipFinalizeElapsedMs = null
         val file = repository.newClipFile(clipId)
         check(repository.clipsDirectory.usableSpace > 256L * 1024 * 1024) {
             "剩余空间不足 256 MB，监控已停止；已有片段仍保留"
         }
         phase = "preparing"
         schedule.beginPhase(SystemClock.elapsedRealtime(), 30)
+        logEvent("clip_prepare", mapOf("clipId" to clipId))
         publish("正在启动相机与麦克风")
         recorder.start(config, file,
             onStarted = {
                 if (running) {
                     clipStartedAt = System.currentTimeMillis()
+                    val startedElapsedMs = SystemClock.elapsedRealtime()
                     if (!stopping) {
                         phase = "recording"
-                        schedule.beginPhase(SystemClock.elapsedRealtime(), config.recordingSeconds)
+                        schedule.beginPhase(startedElapsedMs, config.recordingSeconds)
+                    }
+                    logEvent("clip_started", mapOf(
+                        "clipId" to clipId,
+                        "startupMs" to (startedElapsedMs - clipPrepareElapsedMs),
+                    ))
+                    if (!stopping) {
                         publish("正在保存带声音的视频")
                     }
                 }
@@ -150,6 +176,13 @@ class MonitorService : LifecycleService() {
                                     settingsSnapshot = config.toMap() + mapOf("endsAt" to schedule.endsAtEpochMs),
                                 ))
                                 completedClips++
+                                logEvent("clip_saved", mapOf(
+                                    "clipId" to clipId,
+                                    "startedAt" to clipStartedAt,
+                                    "durationMs" to recorded.durationMilliseconds,
+                                    "sizeBytes" to recorded.file.length(),
+                                    "finalizeMs" to clipFinalizeElapsedMs?.let { SystemClock.elapsedRealtime() - it },
+                                ), includeDeviceState = true)
                                 if (stopping || schedule.sessionExpired(System.currentTimeMillis())) {
                                     if (!stopping) autoEnded = true
                                     finishSession(stopError)
@@ -157,13 +190,20 @@ class MonitorService : LifecycleService() {
                                     // Only a finalized, successfully indexed clip starts the interval.
                                     phase = "waiting"
                                     schedule.beginPhase(SystemClock.elapsedRealtime(), config.intervalSeconds)
+                                    logEvent("waiting", mapOf("intervalSeconds" to config.intervalSeconds))
                                     publish("上一段已保存，等待下一次录制")
                                 }
                             } catch (error: Exception) {
+                                logEvent("clip_index_error", mapOf(
+                                    "clipId" to clipId, "error" to error.stackTraceToString().take(4000),
+                                ))
                                 finishSession("片段保存索引失败：${error.message}")
                             }
                         },
-                        onFailure = { finishSession(stopError ?: it.message ?: "录像失败") },
+                        onFailure = {
+                            logEvent("clip_failed", mapOf("clipId" to clipId, "error" to it.stackTraceToString().take(4000)))
+                            finishSession(stopError ?: it.message ?: "录像失败")
+                        },
                     )
                 }
             },
@@ -172,6 +212,14 @@ class MonitorService : LifecycleService() {
 
     private fun tick() {
         val now = SystemClock.elapsedRealtime()
+        if (now - lastTickElapsedMs > 15_000L) {
+            logEvent("scheduler_gap", mapOf("gapMs" to (now - lastTickElapsedMs)), includeDeviceState = true)
+        }
+        lastTickElapsedMs = now
+        if (now - lastHeartbeatElapsedMs >= 5 * 60_000L) {
+            logEvent("heartbeat", includeDeviceState = true)
+            lastHeartbeatElapsedMs = now
+        }
         if (!stopping && schedule.sessionExpired(System.currentTimeMillis())) {
             requestStop()
             return
@@ -197,6 +245,10 @@ class MonitorService : LifecycleService() {
         stopping = true
         stopError = error
         if (error == null && schedule.sessionExpired(System.currentTimeMillis())) autoEnded = true
+        logEvent("stop_requested", mapOf(
+            "reason" to if (error != null) "error" else if (autoEnded) "auto_end" else "user",
+            "error" to error?.take(4000),
+        ), includeDeviceState = true)
         handler.removeCallbacks(automaticStop)
         if (recorder.isRecording) {
             phase = "stopping"
@@ -215,9 +267,26 @@ class MonitorService : LifecycleService() {
     }
 
     private fun stopRecorder() {
+        if (clipFinalizeElapsedMs == null) {
+            clipFinalizeElapsedMs = SystemClock.elapsedRealtime()
+            logEvent("clip_stop_requested", mapOf("clipId" to clipId))
+        }
         runCatching { recorder.stop() }.onFailure {
+            logEvent("clip_stop_error", mapOf("clipId" to clipId, "error" to it.stackTraceToString().take(4000)))
             finishSession(stopError ?: it.message ?: "无法结束当前录像")
         }
+    }
+
+    private fun logEvent(
+        event: String,
+        details: Map<String, Any?> = emptyMap(),
+        includeDeviceState: Boolean = false,
+    ) {
+        if (::diagnostics.isInitialized) diagnostics.record(
+            event, sessionId.ifEmpty { null },
+            mapOf("phase" to phase, "completedClips" to completedClips) + details,
+            includeDeviceState,
+        )
     }
 
     private fun publish(message: String?) {
@@ -242,6 +311,10 @@ class MonitorService : LifecycleService() {
         val wakeError = runCatching { releaseWakeLock() }.exceptionOrNull()?.message
         val persistError = runCatching { repository.markSessionActive(false) }.exceptionOrNull()?.message
         val finalError = error ?: releaseError ?: wakeError ?: persistError
+        logEvent("session_end", mapOf(
+            "reason" to if (finalError != null) "error" else if (autoEnded) "auto_end" else "user",
+            "error" to finalError?.take(4000),
+        ), includeDeviceState = true)
         MonitorRuntime.publish(MonitorStatus(
             phase = if (finalError == null) "idle" else "error",
             sessionId = sessionId.ifEmpty { null },
@@ -285,6 +358,7 @@ class MonitorService : LifecycleService() {
         runCatching { releaseWakeLock() }
         if (running) {
             running = false
+            logEvent("service_destroyed", includeDeviceState = true)
             runCatching { repository.markSessionActive(false) }
             MonitorRuntime.publish(MonitorRuntime.status.copy(
                 phase = "error", remainingSeconds = 0,

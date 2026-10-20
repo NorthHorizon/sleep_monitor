@@ -12,6 +12,7 @@ class SettingsPage extends StatefulWidget {
     this.sessionEndsAt,
     required this.enabled,
     required this.onSave,
+    this.onExportDiagnostics,
   });
 
   final MonitorSettings settings;
@@ -19,6 +20,7 @@ class SettingsPage extends StatefulWidget {
   final DateTime? sessionEndsAt;
   final bool enabled;
   final Future<bool> Function(MonitorSettings) onSave;
+  final Future<bool> Function()? onExportDiagnostics;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
@@ -209,6 +211,19 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           const SizedBox(height: 16),
           const Text('视频保存在本机应用目录，可在片段页播放或通过系统分享导出。卸载应用会删除这些文件。'),
+          const SizedBox(height: 28),
+          Text('运行诊断', style: theme.textTheme.titleLarge),
+          const SizedBox(height: 8),
+          const Text(
+            '自动记录录制时序、耗时、电量、电池温度和剩余空间，每 5 分钟记录一次运行状态。监控结束后可导出，便于检查整夜运行情况。日志不含音视频内容。',
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: const Key('export-diagnostics'),
+            onPressed: widget.onExportDiagnostics,
+            icon: const Icon(Icons.file_upload_outlined),
+            label: const Text('导出运行日志'),
+          ),
         ],
       ),
     );

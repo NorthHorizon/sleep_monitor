@@ -159,6 +159,11 @@ class _SleepMonitorAppState extends State<SleepMonitorApp>
                                     _controller.canEdit &&
                                     _controller.capabilities.timedRecording,
                                 onSave: _controller.saveSettings,
+                                onExportDiagnostics:
+                                    _controller.canEdit &&
+                                        _controller.capabilities.timedRecording
+                                    ? _controller.shareDiagnostics
+                                    : null,
                               ),
                             ],
                           ),

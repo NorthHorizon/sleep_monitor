@@ -13,6 +13,8 @@ class FakeMonitorGateway implements MonitorGateway {
   int saves = 0;
   int recordingReads = 0;
   Object? saveError;
+  int diagnosticExports = 0;
+  Object? diagnosticError;
 
   @override
   Stream<MonitorSnapshot> get snapshots => events.stream;
@@ -59,4 +61,9 @@ class FakeMonitorGateway implements MonitorGateway {
   Future<void> openRecording(String id) async {}
   @override
   Future<void> shareRecording(String id) async {}
+  @override
+  Future<void> shareDiagnostics() async {
+    if (diagnosticError != null) throw diagnosticError!;
+    diagnosticExports++;
+  }
 }

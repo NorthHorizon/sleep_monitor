@@ -78,6 +78,33 @@ void main() {
   });
 
   test(
+    'diagnostic export is blocked while recording and allowed after stop',
+    () async {
+      await controller.start();
+      expect(await controller.shareDiagnostics(), isFalse);
+      expect(gateway.diagnosticExports, 0);
+      await controller.stop();
+      expect(await controller.shareDiagnostics(), isTrue);
+      expect(gateway.diagnosticExports, 1);
+    },
+  );
+
+  test(
+    'diagnostic export failure keeps session state and releases busy flag',
+    () async {
+      gateway.diagnosticError = PlatformException(
+        code: 'NO_LOGS',
+        message: '暂无运行日志',
+      );
+      final before = controller.snapshot;
+      expect(await controller.shareDiagnostics(), isFalse);
+      expect(controller.snapshot, same(before));
+      expect(controller.error, '暂无运行日志');
+      expect(controller.busy, isFalse);
+    },
+  );
+
+  test(
     'native completion refreshes clips without polling every countdown tick',
     () async {
       gateway.emit(

@@ -12,6 +12,7 @@ abstract interface class MonitorGateway {
   Future<List<RecordingClip>> listRecordings();
   Future<void> openRecording(String id);
   Future<void> shareRecording(String id);
+  Future<void> shareDiagnostics();
 }
 
 MonitorGateway createMonitorGateway() =>
@@ -63,6 +64,9 @@ class AndroidMonitorGateway implements MonitorGateway {
   @override
   Future<void> shareRecording(String id) =>
       _commands.invokeMethod<void>('shareRecording', {'id': id});
+  @override
+  Future<void> shareDiagnostics() =>
+      _commands.invokeMethod<void>('shareDiagnostics');
 }
 
 /// Renders the UI on other platforms without pretending to record.
@@ -90,4 +94,6 @@ class UnsupportedMonitorGateway implements MonitorGateway {
   Future<void> openRecording(String id) async => _unsupported();
   @override
   Future<void> shareRecording(String id) async => _unsupported();
+  @override
+  Future<void> shareDiagnostics() async => _unsupported();
 }

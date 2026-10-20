@@ -10,6 +10,7 @@
 - 原生服务状态同步、录制/等待倒计时、通知栏停止，以及到指定时间自动结束。
 - 设置页与监控页显示“今天 / 明天 HH:mm 结束”；启动相机、完成文件阶段不显示倒计时。
 - 本地片段索引、调用系统播放器和系统分享导出。
+- 整夜运行诊断：录制时序与耗时、每 5 分钟设备状态采样、异常及中断记录；设置页导出 ZIP，Python 离线汇总。
 - 鼾声检测接口和能力开关；**尚未接入模型，鼾声模式不可启动**。
 
 这是基础实现，安卓编译、真机录制和整晚熄屏稳定性需要在有工具链的机器上验证。不会在其他平台生成模拟录像或虚假的鼾声事件。
@@ -74,6 +75,18 @@ adb -d logcat -b crash -d -v threadtime | Out-File -Encoding utf8 .\sleep-crash.
 
 视频保存在应用专属目录，卸载应用会一并删除。需保留的片段请先使用“导出 / 分享”。当前不自动删除旧文件，不自动恢复进程被杀时的半成品视频。
 
+## 整夜试用与日志
+
+本地诊断默认启用：记录每段启动、停止、保存及等待时序，采样电量、电池温度、接电状态、剩余空间和系统电源状态。原始日志最多约 1 MiB，自动轮换；不录入音视频内容，不自动上传。
+
+监控结束后在“设置 → 导出运行日志”分享 ZIP 到电脑，再运行：
+
+```powershell
+python tools/summarize_diagnostics.py "C:\path\sleep-diagnostics-xxx.zip" -o night-report.md
+```
+
+只需 Python 3.9+ 标准库。详见 [首次整夜试用步骤、日志字段与验证](docs/overnight-test.md)。诊断改动涉及原生代码，需要重新构建并覆盖安装 APK。
+
 ## 目录
 
 ```text
@@ -89,10 +102,14 @@ android/app/src/main/kotlin/com/nightowl/sleep_monitor/monitor/
   EndTimeResolver.kt     将本地时刻解析为今天或明天的结束日期
   CameraXClipRecorder.kt  音视频录制适配器
   MonitorRepository.kt   配置与片段持久化
+  SessionDiagnostics.kt  本地事件与设备状态采样
+  DiagnosticLogStore.kt  有界日志轮换及 ZIP 快照
   SnoreDetector.kt       本地鼾声检测扩展点
 test/                    Flutter 控制器与界面测试
 android/app/src/test/    原生计时边界测试
 docs/architecture.md    触发约定、平台协议、存储、实现边界
+docs/overnight-test.md  整夜试用、导出、汇总与回归步骤
+tools/                  Python 离线日志汇总与测试
 ```
 
 技术方案和后续扩展详见 [架构说明](docs/architecture.md)。
